@@ -274,10 +274,24 @@ void run()
     }
     events = (struct epoll_event*)calloc(MAX_EVENTS, sizeof(struct epoll_event));
 
+    // Check whether we should generate the Host header:
+    int generate_host = 1;
+    for (i = 0; headers[i]; i++) {
+        if (!strncasecmp(headers[i], "Host:", 5)) {
+            generate_host = 0;
+            break;
+        }
+    }
     // create the HTTP request buffer
     int request_count = 0;
     int response_count = 0;
-    int write_buffer_length = sprintf(write_buffer, "GET %s HTTP/1.1\r\nHost: %s\r\n", target.path, target.host);
+    int write_buffer_length;
+    if (generate_host) {
+        write_buffer_length = sprintf(write_buffer, "GET %s HTTP/1.1\r\nHost: %s\r\n", target.path, target.host);
+    }
+    else {
+        write_buffer_length = sprintf(write_buffer, "GET %s HTTP/1.1\r\n", target.path);
+    }
     i = 0;
     while (headers[i]) {
         write_buffer_length += sprintf(write_buffer + write_buffer_length, "%s\r\n", headers[i]);
