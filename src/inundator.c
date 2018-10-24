@@ -58,6 +58,8 @@ struct http_client {
     int sockfd;
     int pending;
     int transfer;
+    /* Remaining quantity of data to read; -1 for CHUNK MODE */
+    int remaining;
 };
 
 enum transfer_mode {
@@ -134,6 +136,7 @@ void http_connect(struct http_client *client, struct addrinfo *addr)
     }
     client->pending = 0;
     client->transfer = 0;
+    client->remaining = 0;
 }
 
 void http_close(struct http_client *client)
@@ -177,24 +180,36 @@ char *read_next_line(const char *buffer, int *bytes_read)
     return new_line + 2;
 }
 
-int http_read_response(struct http_client *client)
+int http_read_response(struct http_client *client, int client_id)
 {
     static char read_buffer[READ_BUFFER_SIZE];
     int ret;
     ret = read(client->sockfd, read_buffer, sizeof(read_buffer));
-    if (ret == sizeof(read_buffer)) {
-        error("Read buffer filled up! This is not implemented yet :(");
-    }
     if (ret > 0) {
-        read_buffer[ret] = '\0';
         int response_count = 0;
         char *buffer_ptr = read_buffer;
         if (client->transfer == 1) {
-            char *last = strstr(buffer_ptr, LAST_CHUNK);
-            if (last != NULL) {
-                buffer_ptr = last + sizeof(LAST_CHUNK);
-                client->transfer = 0;
-                response_count = 1;
+            if (client->remaining == -1) { // Chunk mode
+                char *last = strstr(buffer_ptr, LAST_CHUNK);
+                if (last != NULL) {
+                    buffer_ptr = last + sizeof(LAST_CHUNK);
+                    client->transfer = 0;
+                    response_count = 1;
+                }
+            }
+            else { // Fixed mode
+                if (ret >= client->remaining) {
+                    // The buffer presumably contains the end of the current
+                    // response and the beginning of the next one.
+                    buffer_ptr += client->remaining;
+                    client->remaining = 0;
+                    client->transfer = 0;
+                    response_count = 1;
+                }
+                else {
+                    buffer_ptr += ret;
+                    client->remaining -= ret;
+                }
             }
         }
         while (buffer_ptr < read_buffer + ret) {
@@ -219,8 +234,19 @@ int http_read_response(struct http_client *client)
                 }
             }
             if (mode == FIXED) {
-                buffer_ptr += content_length;
-                response_count++;
+                int read_data = (buffer_ptr - read_buffer);
+                int available_data = ret - read_data;
+                if (available_data < content_length) {
+                    buffer_ptr += available_data;
+                    client->remaining = content_length - available_data;
+                    client->transfer = 1;
+                }
+                else {
+                    buffer_ptr += content_length;
+                    client->remaining = 0;
+                    client->transfer = 0;
+                    ++ response_count;
+                }
             }
             else if (mode == CHUNKED) {
                 char *last = strstr(buffer_ptr, LAST_CHUNK);
@@ -241,16 +267,26 @@ int http_read_response(struct http_client *client)
         client->pending -= response_count;
         debug_pr("client #%d: read: %6d, transfer: %d, remaining: %6d, pending: %d, response_count: %d\n",
                  client_id, ret, client->transfer, client->remaining, client->pending, response_count);
-        return response_count;
+        // According to the epoll(7) man page: "The suggested way to use epoll
+        // as an edge-triggered (EPOLLET) interface is as follows:
+        //     i   with nonblocking file descriptors; and
+        //     ii  by waiting for an event only after read(2) or write(2) return
+        //         EAGAIN."
+        // Therefore, call http_read_response() again until it encounters EAGAIN.
+        return response_count + http_read_response(client, client_id);
     }
-    else if (ret < 0 && errno == EAGAIN) {
-        printf("Try again!\n");
-        return 0;
+    else if (ret < 0) {
+        if (errno == EAGAIN || errno == EWOULDBLOCK) {
+            debug_pr("client #%d: encountered EAGAIN/EWOULDBLOCK\n", client_id);
+            return 0;
+        }
+        else {
+            error("read");
+            return -1;
+        }
     }
-    else {
-        error("read");
-        return -1;
-    }
+    debug_pr("client #%d: reached end of file\n", client_id);
+    return 0;
 }
 
 void run()
@@ -338,6 +374,8 @@ void run()
                     request_count -= client->pending;
                     client->pending = 0;
                 }
+                client->transfer = 0;
+                client->remaining = 0;
                 continue;
             }
             if (events[i].events & EPOLLERR)
@@ -352,7 +390,7 @@ void run()
             }
             if (events[i].events & EPOLLIN) {
                 // socket ready for reading
-                int num_response = http_read_response(client);
+                int num_response = http_read_response(client, client_id);
                 response_count += num_response;
             }
             if ((events[i].events & EPOLLOUT && (max_requests == -1 || request_count < max_requests))) {
