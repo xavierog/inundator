@@ -73,11 +73,15 @@ struct endpoint {
     char *path;
 };
 
+int debug = 0;
 int concurrency = 1;
 int max_requests = -1;
 int max_time = -1;
 char *headers[MAX_HEADERS];
 struct endpoint target;
+
+#define debug_pr(fmt, ...) \
+            do { if (debug) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
 
 void error(const char *msg) {
     perror(msg);
@@ -235,6 +239,8 @@ int http_read_response(struct http_client *client)
             }
         }
         client->pending -= response_count;
+        debug_pr("client #%d: read: %6d, transfer: %d, remaining: %6d, pending: %d, response_count: %d\n",
+                 client_id, ret, client->transfer, client->remaining, client->pending, response_count);
         return response_count;
     }
     else if (ret < 0 && errno == EAGAIN) {
@@ -319,6 +325,7 @@ void run()
                 http_close(client);
 
                 // reconnect the client
+                debug_pr("client #%d: got EPOLLRDHUP, reconnecting\n", client_id);
                 http_connect(client, target_addr);
                 ev[client_id].data.u32 = client_id;
                 ev[client_id].events = EPOLLET | EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLERR;
@@ -416,6 +423,7 @@ int parse_url(char *url, struct endpoint *ep) {
 
 int main(int argc, char **argv)
 {
+    debug = (getenv("INUNDATOR_DEBUG") != NULL);
     const char* short_options = "+n:c:H:h";
     const struct option long_options[] = {
         { "requests",    required_argument, NULL, 'n' },
