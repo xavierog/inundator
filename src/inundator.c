@@ -372,6 +372,13 @@ void run()
         for (i = 0; i < n; i++) {
             int client_id = events[i].data.u32;
             struct http_client *client = (struct http_client*)(clients + client_id);
+            // Test EPOLLIN first, so as to read remaining bytes in case we
+            // receive EPOLLIN|EPOLLRDHUP:
+            if (events[i].events & EPOLLIN) {
+                // socket ready for reading
+                int num_response = http_read_response(client, client_id);
+                response_count += num_response;
+            }
             if (events[i].events & EPOLLRDHUP)
             {
                 http_close(client);
@@ -403,11 +410,6 @@ void run()
             {
                 error("EPOLLHUP");
                 goto exit_loop;
-            }
-            if (events[i].events & EPOLLIN) {
-                // socket ready for reading
-                int num_response = http_read_response(client, client_id);
-                response_count += num_response;
             }
             if ((events[i].events & EPOLLOUT && (max_requests == -1 || request_count < max_requests))) {
                 // socket ready for writing
