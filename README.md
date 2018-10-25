@@ -11,6 +11,7 @@ $ inundator --help
 Usage: inundator [OPTIONS...] URL
    OPTIONS
       -n, --requests=N       Total number of requests
+      -b, --buffer=S         Buffer size (in bytes)
       -c, --concurrency=N    Number of concurrent connections
       -H, --header           Add a HTTP header
       -h, --help             Display this help and exit

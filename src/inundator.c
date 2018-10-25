@@ -86,6 +86,8 @@ int resp_2xx_count = 0;
 int resp_3xx_count = 0;
 int resp_4xx_count = 0;
 int resp_5xx_count = 0;
+size_t read_buffer_size = READ_BUFFER_SIZE;
+char *read_buffer;
 
 #define debug_pr(fmt, ...) \
             do { if (debug) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
@@ -196,9 +198,8 @@ char *read_next_line(const char *buffer, int *bytes_read)
 
 int http_read_response(struct http_client *client, int client_id)
 {
-    static char read_buffer[READ_BUFFER_SIZE];
     int ret;
-    ret = read(client->sockfd, read_buffer, sizeof(read_buffer));
+    ret = read(client->sockfd, read_buffer, read_buffer_size);
     if (ret > 0) {
         int response_count = 0;
         char *buffer_ptr = read_buffer;
@@ -313,6 +314,9 @@ void run()
     char write_buffer[WRITE_BUFFER_SIZE];
     struct http_client clients[concurrency];
     struct epoll_event ev[concurrency], *events;
+
+    // Allocate buffer for read operations:
+    read_buffer = malloc(read_buffer_size);
 
     efd = epoll_create1(0);
     if (efd < 0) {
@@ -444,6 +448,7 @@ void print_usage(FILE *stream, int exit_code)
     fprintf(stream, "Usage: inundator [OPTIONS...] URL\n");
     fprintf(stream, "   OPTIONS\n");
     fprintf(stream, "      -n, --requests=N       Total number of requests\n");
+    fprintf(stream, "      -b, --buffer=S         Buffer size (in bytes)\n");
     fprintf(stream, "      -c, --concurrency=N    Number of concurrent connections\n");
     fprintf(stream, "      -H, --header           Add a HTTP header\n");
     fprintf(stream, "      -h, --help             Display this help and exit\n");
@@ -487,9 +492,10 @@ int parse_url(char *url, struct endpoint *ep) {
 int main(int argc, char **argv)
 {
     debug = (getenv("INUNDATOR_DEBUG") != NULL);
-    const char* short_options = "+n:c:H:h";
+    const char* short_options = "+n:b:c:H:h";
     const struct option long_options[] = {
         { "requests",    required_argument, NULL, 'n' },
+        { "buffer",      required_argument, NULL, 'b' },
         { "concurrency", required_argument, NULL, 'c' },
         { "header",      required_argument, NULL, 'H' },
         { "help",        no_argument,       NULL, 'h' },
@@ -505,6 +511,9 @@ int main(int argc, char **argv)
         switch(next_option) {
             case 'n':
                 max_requests = atoi(optarg);
+                break;
+            case 'b':
+                read_buffer_size = atoi(optarg);
                 break;
             case 'c':
                 concurrency = atoi(optarg);
