@@ -81,6 +81,11 @@ int max_requests = -1;
 int max_time = -1;
 char *headers[MAX_HEADERS];
 struct endpoint target;
+int resp_1xx_count = 0;
+int resp_2xx_count = 0;
+int resp_3xx_count = 0;
+int resp_4xx_count = 0;
+int resp_5xx_count = 0;
 
 #define debug_pr(fmt, ...) \
             do { if (debug) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
@@ -88,6 +93,15 @@ struct endpoint target;
 void error(const char *msg) {
     perror(msg);
     exit(1);
+}
+
+void update_stats(int client_id, int http_status) {
+    if      (http_status >= 100 && http_status < 200) ++ resp_1xx_count;
+    else if (http_status >= 200 && http_status < 300) ++ resp_2xx_count;
+    else if (http_status >= 300 && http_status < 400) ++ resp_3xx_count;
+    else if (http_status >= 400 && http_status < 500) ++ resp_4xx_count;
+    else if (http_status >= 500 && http_status < 600) ++ resp_5xx_count;
+    else debug_pr("update_stats: got suspicious HTTP status %d from client #%d\n", http_status, client_id);
 }
 
 void set_non_blocking(int sockfd)
@@ -216,6 +230,8 @@ int http_read_response(struct http_client *client, int client_id)
             // parse response
             enum transfer_mode mode = UNKNOWN;
             int status = read_status_line(buffer_ptr);
+            debug_pr("client #%d: got HTTP %d\n", client_id, status);
+            update_stats(client_id, status);
             int content_length = -1;
             int read_bytes = 0;
             while ((buffer_ptr = read_next_line(buffer_ptr, &read_bytes)) != NULL) {
@@ -409,6 +425,13 @@ exit_loop:
     close(efd);
     printf("Requests sent: %d\n", request_count);
     printf("Responses received: %d\n", response_count);
+    int resp_xxx_count = 0;
+    printf("  1xx: %d\n", resp_1xx_count); resp_xxx_count += resp_1xx_count;
+    printf("  2xx: %d\n", resp_2xx_count); resp_xxx_count += resp_2xx_count;
+    printf("  3xx: %d\n", resp_3xx_count); resp_xxx_count += resp_3xx_count;
+    printf("  4xx: %d\n", resp_4xx_count); resp_xxx_count += resp_4xx_count;
+    printf("  5xx: %d\n", resp_5xx_count); resp_xxx_count += resp_5xx_count;
+    printf("  delta: %d\n", response_count - resp_xxx_count);
     for (j=0; j<concurrency; j++) {
         http_close(&clients[j]);
     }
