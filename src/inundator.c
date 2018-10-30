@@ -81,6 +81,8 @@ int max_requests = -1;
 int max_time = -1;
 char *headers[MAX_HEADERS];
 struct endpoint target;
+volatile sig_atomic_t should_print_stats = 0;
+volatile sig_atomic_t should_exit = 0;
 int request_count = 0;
 int response_count = 0;
 int resp_1xx_count = 0;
@@ -118,6 +120,14 @@ void print_stats() {
     printf("  4xx: %d\n", resp_4xx_count); resp_xxx_count += resp_4xx_count;
     printf("  5xx: %d\n", resp_5xx_count); resp_xxx_count += resp_5xx_count;
     printf("  delta: %d\n", response_count - resp_xxx_count);
+}
+
+void sig_quit_handler() {
+    should_print_stats = 1;
+}
+
+void sig_int_handler() {
+    should_exit = 1;
 }
 
 void set_non_blocking(int sockfd)
@@ -435,6 +445,13 @@ void run()
                 }
             }
         }
+        if (should_exit) {
+            goto exit_loop;
+        }
+        if (should_print_stats) {
+            print_stats();
+            should_print_stats = 0;
+        }
         //TODO estimate rate and print it from time to time
     }
 exit_loop:
@@ -543,6 +560,11 @@ int main(int argc, char **argv)
         printf("Unable to parse URL %s\n", url);
         exit(1);
     }
+    struct sigaction sig_int_action, sig_quit_action;
+    sig_int_action.sa_handler = sig_int_handler;
+    sig_quit_action.sa_handler = sig_quit_handler;
+    sigaction(SIGINT, &sig_int_action, NULL);
+    sigaction(SIGQUIT, &sig_quit_action, NULL);
     run();
     return 0;
 }
