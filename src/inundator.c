@@ -40,6 +40,7 @@
 #include <errno.h>
 #include <signal.h>
 #include <getopt.h>
+#include <time.h>
 
 #include <sys/time.h>
 #include <sys/resource.h>
@@ -92,6 +93,10 @@ int resp_4xx_count = 0;
 int resp_5xx_count = 0;
 size_t read_buffer_size = READ_BUFFER_SIZE;
 char *read_buffer;
+struct timespec start_time;
+struct timespec latest_stats_time;
+int latest_stats_req;
+int latest_stats_resp;
 
 #define debug_pr(fmt, ...) \
             do { if (debug) fprintf(stderr, fmt, __VA_ARGS__); } while (0)
@@ -99,6 +104,15 @@ char *read_buffer;
 void error(const char *msg) {
     perror(msg);
     exit(1);
+}
+
+void gettime(struct timespec *tp) {
+    int clock_ret = clock_gettime(CLOCK_MONOTONIC_RAW, tp);
+    if (clock_ret < 0) error("clock");
+}
+
+double delta_time(struct timespec *tp1, struct timespec *tp2) {
+    return (tp2->tv_sec + (tp2->tv_nsec / 1000000000.0)) - (tp1->tv_sec + (tp1->tv_nsec / 1000000000.0));
 }
 
 void update_stats(int client_id, int http_status) {
@@ -111,8 +125,19 @@ void update_stats(int client_id, int http_status) {
 }
 
 void print_stats() {
-    printf("Requests sent: %d\n", request_count);
-    printf("Responses received: %d\n", response_count);
+    struct timespec now;
+    gettime(&now);
+    double start_delta = delta_time(&start_time, &now);
+    double latest_delta = delta_time(&latest_stats_time, &now);
+    printf("\nRunning for %.1fs\n", start_delta);
+    printf("Requests sent: %d (%.1f req/s, %.1f req/s overall)\n",
+           request_count,
+           (request_count - latest_stats_req) / latest_delta,
+           request_count / start_delta);
+    printf("Responses received: %d (%.1f resp/s, %.1f resp/s overall)\n",
+           response_count,
+           (response_count - latest_stats_resp) / latest_delta,
+           response_count / start_delta);
     int resp_xxx_count = 0;
     printf("  1xx: %d\n", resp_1xx_count); resp_xxx_count += resp_1xx_count;
     printf("  2xx: %d\n", resp_2xx_count); resp_xxx_count += resp_2xx_count;
@@ -120,6 +145,9 @@ void print_stats() {
     printf("  4xx: %d\n", resp_4xx_count); resp_xxx_count += resp_4xx_count;
     printf("  5xx: %d\n", resp_5xx_count); resp_xxx_count += resp_5xx_count;
     printf("  delta: %d\n", response_count - resp_xxx_count);
+    latest_stats_req = request_count;
+    latest_stats_resp = response_count;
+    latest_stats_time = now;
 }
 
 void sig_quit_handler() {
@@ -349,6 +377,8 @@ void run()
 
     memset(clients, 0, sizeof(struct http_client) * concurrency);
     struct addrinfo *target_addr = getaddr(target.host, target.port);
+    gettime(&start_time);
+    latest_stats_time = start_time;
     for (j=0; j<concurrency; j++) {
         http_connect(&clients[j], target_addr);
         ev[j].data.u32 = j;
@@ -452,7 +482,6 @@ void run()
             print_stats();
             should_print_stats = 0;
         }
-        //TODO estimate rate and print it from time to time
     }
 exit_loop:
     freeaddr(target_addr);
