@@ -94,6 +94,7 @@ int resp_2xx_count = 0;
 int resp_3xx_count = 0;
 int resp_4xx_count = 0;
 int resp_5xx_count = 0;
+int connreset_count = 0;
 size_t read_buffer_size = READ_BUFFER_SIZE;
 char *read_buffer;
 struct timespec start_time;
@@ -141,6 +142,7 @@ void print_stats() {
            response_count,
            (response_count - latest_stats_resp) / latest_delta,
            response_count / start_delta);
+    printf("Connection reset events: %d\n", connreset_count);
     int resp_xxx_count = 0;
     printf("  1xx: %d\n", resp_1xx_count); resp_xxx_count += resp_1xx_count;
     printf("  2xx: %d\n", resp_2xx_count); resp_xxx_count += resp_2xx_count;
@@ -366,6 +368,14 @@ int http_read_response(struct http_client *client, int client_id)
     else if (ret < 0) {
         if (errno == EAGAIN || errno == EWOULDBLOCK) {
             debug_pr("client #%d: encountered EAGAIN/EWOULDBLOCK\n", client_id);
+            return 0;
+        }
+        else if (errno == ECONNRESET) {
+            debug_pr("client #%d: encountered ECONNRESET, reconnecting\n", client_id);
+            ++ connreset_count;
+            http_close(client);
+            http_connect(client, target_addr);
+            http_poll(client, client_id);
             return 0;
         }
         else {
