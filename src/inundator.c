@@ -210,6 +210,22 @@ void http_connect(struct http_client *client, struct addrinfo *addr)
     client->remaining = 0;
 }
 
+void http_poll(struct http_client *client, int client_id) {
+    ev[client_id].data.u32 = client_id;
+    ev[client_id].events = EPOLLET | EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLERR;
+    int ret = epoll_ctl(efd, EPOLL_CTL_ADD, client->sockfd, &ev[client_id]);
+
+    if (ret < 0) {
+        error("epoll_ctl");
+    }
+    if (client->pending) {
+        request_count -= client->pending;
+        client->pending = 0;
+    }
+    client->transfer = 0;
+    client->remaining = 0;
+}
+
 void http_close(struct http_client *client)
 {
     shutdown(client->sockfd, SHUT_RDWR);
@@ -364,7 +380,6 @@ int http_read_response(struct http_client *client, int client_id)
 void run()
 {
     int i, j;
-    int ret;
     char write_buffer[WRITE_BUFFER_SIZE];
     struct http_client clients[concurrency];
     struct epoll_event *events;
@@ -385,12 +400,7 @@ void run()
     latest_stats_time = start_time;
     for (j=0; j<concurrency; j++) {
         http_connect(&clients[j], target_addr);
-        ev[j].data.u32 = j;
-        ev[j].events = EPOLLET | EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLERR;
-        ret = epoll_ctl(efd, EPOLL_CTL_ADD, clients[j].sockfd, &ev[j]);
-        if (ret < 0) {
-            error("epoll_ctl");
-        }
+        http_poll(&clients[j], j);
     }
     events = (struct epoll_event*)calloc(MAX_EVENTS, sizeof(struct epoll_event));
 
@@ -441,24 +451,11 @@ void run()
             }
             if (events[i].events & EPOLLRDHUP)
             {
-                http_close(client);
-
-                // reconnect the client
+                // Reconnect the client:
                 debug_pr("client #%d: got EPOLLRDHUP, reconnecting\n", client_id);
+                http_close(client);
                 http_connect(client, target_addr);
-                ev[client_id].data.u32 = client_id;
-                ev[client_id].events = EPOLLET | EPOLLIN | EPOLLOUT | EPOLLRDHUP | EPOLLERR;
-                ret = epoll_ctl(efd, EPOLL_CTL_ADD, client->sockfd, &ev[client_id]);
-
-                if (ret < 0) {
-                    error("epoll_ctl");
-                }
-                if (client->pending) {
-                    request_count -= client->pending;
-                    client->pending = 0;
-                }
-                client->transfer = 0;
-                client->remaining = 0;
+                http_poll(client, client_id);
                 continue;
             }
             if (events[i].events & EPOLLERR)
