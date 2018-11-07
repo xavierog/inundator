@@ -81,7 +81,10 @@ int concurrency = 1;
 int max_requests = -1;
 int max_time = -1;
 char *headers[MAX_HEADERS];
+int efd;
+struct epoll_event *ev;
 struct endpoint target;
+struct addrinfo *target_addr;
 volatile sig_atomic_t should_print_stats = 0;
 volatile sig_atomic_t should_exit = 0;
 int request_count = 0;
@@ -362,11 +365,12 @@ void run()
 {
     int i, j;
     int ret;
-    int efd;
     char write_buffer[WRITE_BUFFER_SIZE];
     struct http_client clients[concurrency];
-    struct epoll_event ev[concurrency], *events;
+    struct epoll_event *events;
 
+    // Allocate epoll events array:
+    ev = malloc(concurrency * sizeof(struct epoll_event));
     // Allocate buffer for read operations:
     read_buffer = malloc(read_buffer_size);
 
@@ -376,7 +380,7 @@ void run()
     }
 
     memset(clients, 0, sizeof(struct http_client) * concurrency);
-    struct addrinfo *target_addr = getaddr(target.host, target.port);
+    target_addr = getaddr(target.host, target.port);
     gettime(&start_time);
     latest_stats_time = start_time;
     for (j=0; j<concurrency; j++) {
